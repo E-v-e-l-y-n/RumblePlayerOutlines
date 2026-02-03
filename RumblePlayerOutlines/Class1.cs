@@ -3,6 +3,8 @@ using MelonLoader;
 using System;
 using RumblePlayerOutlines;
 using Il2CppRUMBLE.Players;
+using RumbleModUI;
+using Il2CppRUMBLE.Managers;
 
 [assembly: MelonInfo(typeof(RumblePlayerOutlines.Class1), ModInfo.Name, ModInfo.Version, ModInfo.Author)]
 [assembly: MelonGame(null, null)]
@@ -14,25 +16,58 @@ namespace RumblePlayerOutlines
         public const string Name = "RumblePlayerOutlines";
         public const string Description = "adds outlines to other players";
         public const string Author = "Evelyn";
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
     }
+
     public class Class1 : MelonMod
     {
         public static Class1 instance;
         public Shader unlitShader;
 
+        private Mod RumblePlayerOutlines = new Mod();
+        ModSetting<int> outlineSize;
+        ModSetting<bool> outlineEnabled;
+
         public override void OnLateInitializeMelon()
         {
             instance = this;
             unlitShader = Shader.Find("Universal Render Pipeline/Unlit");
+
+            RumblePlayerOutlines.ModName = "RumblePlayerOutlines";
+            RumblePlayerOutlines.ModVersion = ModInfo.Version;
+            RumblePlayerOutlines.SetFolder("RumblePlayerOutlines");
+            outlineEnabled = RumblePlayerOutlines.AddToList("Toggle outlines", true, 0, "Toggles the outlines on players", new Tags());
+            outlineSize = RumblePlayerOutlines.AddToList("Outline Size", 5, "How big the outlines are", new Tags());
+            RumblePlayerOutlines.GetFromFile();
+            RumblePlayerOutlines.ModSaved += OnModUISaved;
+
+            UI.instance.UI_Initialized += delegate { UI.instance.AddMod(RumblePlayerOutlines); };
+        }
+
+        public void OnModUISaved()
+        {
+            foreach (Player player in PlayerManager.instance.AllPlayers)
+            {
+                Transform visuals = FindChildByName(player.Controller.transform, "Visuals");
+                Transform outline = FindChildByName(visuals, "Outline");
+
+                outline.gameObject.SetActive((bool)outlineEnabled.Value);
+                foreach (Transform bone in outline.GetComponent<SkinnedMeshRenderer>().bones)
+                {
+                    if (bone.localScale != Vector3.zero)
+                    {
+                        bone.localScale = Vector3.one * GetOutlineSize();
+                    }
+                }
+            }
         }
 
         public System.Collections.IEnumerator CreatePlayerOutline(PlayerController player)
         {
             MelonLogger.Msg($"trying to create outline on player {player.assignedPlayer.Data.GeneralData.PublicUsername}");
             yield return new WaitForSeconds(1);
-            Transform visuals = player.transform.GetChild(1);
-            SkinnedMeshRenderer originalRenderer = visuals.GetChild(0).GetComponent<SkinnedMeshRenderer>();
+            Transform visuals = FindChildByName(player.transform, "Visuals"); // not sure if LCKViewport exists on other players so this is safer
+            SkinnedMeshRenderer originalRenderer = FindChildByName(visuals, "Renderer").GetComponent<SkinnedMeshRenderer>(); // in case it moves from position 0
 
             GameObject outline = new GameObject("Outline");
             outline.transform.SetParent(visuals);
@@ -47,10 +82,7 @@ namespace RumblePlayerOutlines
 
             Transform skelington = visuals.GetChild(1);
 
-
-            Transform[] outlineBones = new Transform[originalRenderer.bones.Length];
-
-            DuplicateAllChildrenRecursive(skelington.GetChild(0), originalRenderer.bones, ref outlineBones); // the note is on the method itself
+            Transform[] outlineBones = DuplicateBones(originalRenderer.bones);
 
             outlineRenderer.bones = outlineBones;
             outlineRenderer.rootBone = outlineBones[IndexOf(outlineBones, originalRenderer.rootBone.name + "_Outline")];
@@ -78,7 +110,7 @@ namespace RumblePlayerOutlines
                         if (name.Contains(nameToCheck))
                         {
                             outlineRenderer.bones[i].localScale = Vector3.zero;
-                            outlineRenderer.bones[i].position = chestBone.position; // sorta hide the head in first person, kinda goofy and will probably fuck something else (like the shadow) up
+                            outlineRenderer.bones[i].position = chestBone.position; // sorta hide the head in first person, doesnt work well with rockcam
                             break;
                         }
                     }
@@ -88,27 +120,21 @@ namespace RumblePlayerOutlines
             MelonLogger.Msg($"successfully created an outline for player {player.assignedPlayer.Data.GeneralData.PublicUsername}");
         }
 
-        public void DuplicateAllChildrenRecursive(Transform transform, Transform[] bonesTarget, ref Transform[] bones) // goes through every bone, duplicates it, annihilates the children and then sets the outline's bones to the new duplicate
+        public Transform[] DuplicateBones(Transform[] bonesTarget) // significantly better than the previous recursive function
         {
-            if (!transform.name.Contains("_Outline"))
-            {
-                Transform duplicate = GameObject.Instantiate(transform, transform);
-                AnnihilateChildren(duplicate);
-                duplicate.localPosition = Vector3.zero;
-                duplicate.localRotation = Quaternion.identity;
-                duplicate.localScale = Vector3.one * 1.05f; // arbitrary number that i don't wanna make a config for...
-                duplicate.name = transform.name + "_Outline";
-                int index = IndexOf(bonesTarget, transform.name);
-                if (index != -1)
-                {
-                    bones[index] = duplicate;
-                }
+            Transform[] duplicateBones = new Transform[bonesTarget.Length];
 
-                for (int i = 0; i < transform.childCount; i++)
-                {
-                    DuplicateAllChildrenRecursive(transform.GetChild(i), bonesTarget, ref bones);
-                }
+            for (int i = 0; i < bonesTarget.Length; i++)
+            {
+                duplicateBones[i] = GameObject.Instantiate(bonesTarget[i], bonesTarget[i]);
+                AnnihilateChildren(duplicateBones[i]);
+                duplicateBones[i].localPosition = Vector3.zero;
+                duplicateBones[i].localRotation = Quaternion.identity;
+                duplicateBones[i].localScale = Vector3.one * GetOutlineSize();
+                duplicateBones[i].name = bonesTarget[i].name + "_Outline";
             }
+
+            return duplicateBones;
         }
 
         public int IndexOf(Transform[] array, string name) // istg if someone asks what this does
@@ -125,6 +151,21 @@ namespace RumblePlayerOutlines
         {
             for (int i = obj.childCount - 1; i >= 0; i--)
                 GameObject.Destroy(obj.GetChild(i).gameObject);
+        }
+
+        public Transform FindChildByName(Transform parent, string name)
+        {
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                if (parent.GetChild(i).name == name)
+                    return parent.GetChild(i);
+            }
+            return null;
+        }
+
+        public float GetOutlineSize()
+        {
+            return (1 + ((int)outlineSize.Value / 100f));
         }
     }
 }

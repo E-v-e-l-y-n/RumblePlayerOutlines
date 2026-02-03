@@ -244,6 +244,9 @@
     <Reference Include="Microsoft.Extensions.Primitives">
       <HintPath>..\..\..\Steam\steamapps\common\RUMBLE\MelonLoader\net6\Microsoft.Extensions.Primitives.dll</HintPath>
     </Reference>
+    <Reference Include="ModUI">
+      <HintPath>..\..\..\Steam\steamapps\common\RUMBLE\Mods\ModUI.dll</HintPath>
+    </Reference>
     <Reference Include="Mono.Cecil">
       <HintPath>..\..\..\Steam\steamapps\common\RUMBLE\MelonLoader\net6\Mono.Cecil.dll</HintPath>
     </Reference>
